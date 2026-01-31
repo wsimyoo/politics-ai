@@ -2,52 +2,88 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 import os
-import re
+from datetime import datetime
 
-# ... 前面的页面配置保持不变 ...
+# 1. 页面基本配置
+st.set_page_config(page_title="政治名师智能素材库", page_icon="📚", layout="wide")
 
-# --- 增强功能：链接识别函数 ---
-def is_url(string):
-    regex = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\(\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
-    return re.findall(regex, string)
+# 2. 数据库初始化：确保保存功能正常
+DB_FILE = "my_politics_library.csv"
+if not os.path.exists(DB_FILE):
+    df_init = pd.DataFrame(columns=["日期", "素材标题", "对应模块", "解析内容", "原文/链接"])
+    df_init.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
 
-# --- TAB 1: 智能加工中心 (升级版) ---
+# 3. 侧边栏：配置 DeepSeek
+with st.sidebar:
+    st.title("🛡️ 配置中心")
+    api_key = st.text_input("DeepSeek API Key", type="password")
+    st.divider()
+    st.info("💡 提示：在此输入 Key 后即可开始分析。")
+
+# 4. 主界面：定义标签页（修复 NameError 的关键）
+tab1, tab2 = st.tabs(["✨ 智能加工中心", "🗄️ 我的数字化素材库"])
+
+# --- TAB 1: 智能分析中心 ---
 with tab1:
-    st.header("🚀 多模态素材加工")
+    st.header("🚀 素材加工")
+    col1, col2 = st.columns([1, 1])
     
-    # 增加链接输入区
-    input_type = st.radio("选择输入方式", ["直接粘贴文本", "输入网页/文章链接"], horizontal=True)
-    
-    if input_type == "输入网页/文章链接":
-        source_url = st.text_input("🔗 粘贴公众号、新闻网页或视频链接：")
-        st.caption("注：部分公众号文章有访问限制，若自动抓取失败，AI 将尝试通过标题进行联网检索分析。")
-        news_input = source_url # 将链接传给 AI
-    else:
-        news_input = st.text_area("在此粘贴素材文字内容：", height=250)
-
-    if st.button("🔥 智能识别并解析"):
-        if not api_key:
-            st.error("请先配置 API Key")
+    with col1:
+        st.subheader("📍 输入素材")
+        input_type = st.radio("选择方式", ["文字内容", "文章链接"], horizontal=True)
+        news_title = st.text_input("给素材起个名")
+        
+        if input_type == "文章链接":
+            news_input = st.text_input("🔗 粘贴公众号或新闻链接：")
         else:
-            client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+            news_input = st.text_area("在此粘贴文字：", height=200)
             
-            with st.spinner('正在调取 DeepSeek-V3 联网解析能力...'):
-                # 针对链接，我们优化 Prompt，让 AI 去“联想”和“检索”
-                if input_type == "输入网页/文章链接":
-                    system_prompt = "你是一位拥有联网检索能力的政治老师。请根据提供的链接内容（或根据链接特征进行检索），分析其对应的政治教材考点。"
-                else:
-                    system_prompt = "你是一位资深思政老师，请根据文本分析教材考点。"
+        analyze_btn = st.button("🔥 开始 AI 解析")
 
-                prompt = f"目标素材/链接：{news_input}\n\n要求：1.识别素材核心事件 2.关联必修1-4知识点 3.给出解析 4.设计一道考题设问。"
+    with col2:
+        st.subheader("🧠 解析结果")
+        if analyze_btn:
+            if not api_key:
+                st.error("请先在左侧输入 API Key")
+            else:
+                client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com")
+                with st.spinner('AI 正在读取并匹配教材...'):
+                    # 提示词优化：让 AI 即使面对链接也能尝试检索
+                    prompt = f"你是一位思政名师。请分析该素材（如果是链接请基于标题和已知信息检索）：\n{news_input}\n\n格式要求：\n【模块】：必修X\n【考点】：具体知识点\n【解析】：深度分析\n【金句】：适合背诵的词句"
+                    
+                    try:
+                        response = client.chat.completions.create(
+                            model="deepseek-chat",
+                            messages=[{"role": "user", "content": prompt}]
+                        )
+                        res = response.choices[0].message.content
+                        st.session_state['temp_res'] = res # 临时存入 session 供保存使用
+                        st.markdown(res)
+                    except Exception as e:
+                        st.error(f"分析失败，请检查 Key 或网络：{e}")
+        
+        # 存入数据库功能
+        if 'temp_res' in st.session_state:
+            if st.button("📥 确认入库（永久保存）"):
+                current_res = st.session_state['temp_res']
+                # 提取模块名称的简单逻辑
+                module_name = "未分类"
+                if "【模块】" in current_res:
+                    module_name = current_res.split("【模块】")[1].split("\n")[0].strip("：: ")
                 
-                # 调用 DeepSeek (确保 key 有联网权限)
-                response = client.chat.completions.create(
-                    model="deepseek-chat",
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": prompt}
-                    ]
-                )
-                # ... 后续显示与入库代码与之前一致 ...
+                new_data = {
+                    "日期": datetime.now().strftime("%Y-%m-%d"),
+                    "素材标题": news_title if news_title else "未命名素材",
+                    "对应模块": module_name,
+                    "解析内容": current_res,
+                    "原文/链接": news_input
+                }
+                # 写入 CSV
+                lib_df = pd.read_csv(DB_FILE)
+                lib_df = pd.concat([lib_df, pd.DataFrame([new_data])], ignore_index=True)
+                lib_df.to_csv(DB_FILE, index=False, encoding='utf-8-sig')
+                st.success("已存入'我的素材库'！")
+
+# --- TAB 2:
 
 
