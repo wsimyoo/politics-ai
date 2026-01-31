@@ -1,70 +1,42 @@
 import streamlit as st
 import pandas as pd
 from openai import OpenAI
+import os
 
-# --- 1. 基础配置 ---
-st.set_page_config(page_title="政治教师AI助手", layout="wide")
-st.title("📖 高中政治时政素材自动关联系统")
+# 1. 网页配置
+st.set_page_config(page_title="政治老师AI助手", layout="wide")
+st.title("📖 政治素材智能匹配系统")
 
-# --- 2. 侧边栏配置：输入你的 API Key ---
-st.sidebar.header("设置")
-api_key = st.sidebar.text_input("输入你的 API Key", type="password")
-model_choice = "deepseek-chat" # 或者使用 "glm-4"
+# 2. 侧边栏配置
+with st.sidebar:
+    st.header("⚙️ 设置")
+    api_key = st.text_input("输入 API Key", type="password")
+    base_url = st.text_input("API地址 (默认DeepSeek)", value="https://api.deepseek.com")
 
-# --- 3. 读取你刚做好的 CSV 表格 ---
+# 3. 加载教材
 @st.cache_data
 def load_data():
-    # 读取你整理的教材
-    return pd.read_csv('textbook.csv')
+    if os.path.exists('textbook.csv'):
+        return pd.read_csv('textbook.csv')
+    return None
 
-try:
-    df = load_data()
-    st.sidebar.success(f"成功加载教材：已识别 {len(df)} 条知识点")
-except:
-    st.sidebar.error("找不到 textbook.csv，请确保它和本程序在同一个文件夹下")
+df = load_data()
 
-# --- 4. 核心功能：输入新闻并分析 ---
-st.subheader("第一步：粘贴时政素材")
-news_text = st.text_area("在此粘贴热点新闻或时政案例：", height=200, placeholder="例如：新质生产力的发展提升了我国核心竞争力...")
-
-if st.button("🚀 开始智能关联"):
-    if not api_key:
-        st.warning("请先在左边输入 API Key 才能运行哦！")
-    elif not news_text:
-        st.warning("请先粘贴一段新闻内容。")
-    else:
-        # 初始化 AI
-        client = OpenAI(api_key=api_key, base_url="https://api.deepseek.com") # 如果用智谱，URL要改
-
-        with st.spinner('AI 正在翻阅教材进行深度匹配...'):
-            # 将你的教材内容转为文本，发给 AI
-            textbook_context = df.to_string(index=False)
-            
-            prompt = f"""
-            你是一位专业的高中政治教研员。
-            任务：请从下方的【教材知识库】中，找出与【时政素材】最匹配的 1-3 个知识点。
-            
-            【教材知识库】：
-            {textbook_context}
-            
-            【时政素材】：
-            {news_text}
-            
-            请按此格式回复：
-            ### 📍 关联知识点 1
-            - **核心考点**：(填教材里的考点名称)
-            - **教材原话**：(填教材里的原理内容)
-            - **结合点分析**：(用原理分析新闻，解释为什么要用这个点，100字以内)
-            """
-
-            response = client.chat.completions.create(
-                model=model_choice,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            st.markdown("---")
-            st.subheader("第二步：AI 关联分析结果")
-            st.markdown(response.choices[0].message.content)
-
-# --- 5. 页脚提示 ---
-st.caption("提示：本工具仅供教师备课参考，建议结合最新教参使用。")
+# 4. 界面功能
+if df is not None:
+    news_text = st.text_area("在此粘贴新闻素材：", height=200)
+    if st.button("开始分析"):
+        if not api_key:
+            st.error("请先输入 API Key")
+        else:
+            client = OpenAI(api_key=api_key, base_url=base_url)
+            with st.spinner('AI 正在翻阅教材...'):
+                prompt = f"你是政治老师。请根据教材内容：\n{df.to_string()}\n分析这则新闻：\n{news_text}"
+                response = client.chat.completions.create(
+                    model="deepseek-chat",
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                st.write("### 🎓 关联分析结果：")
+                st.markdown(response.choices[0].message.content)
+else:
+    st.error("未找到 textbook.csv 文件，请确保它在 GitHub 仓库中。")
