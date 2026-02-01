@@ -5,15 +5,14 @@ import requests
 import os
 from datetime import datetime
 
-# 1. 页面配置：设置沉浸式标题和图标
+# 1. 页面配置
 st.set_page_config(
     page_title="政治名师 AI 智库",
     page_icon="🏛️",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    layout="wide"
 )
 
-# 2. 注入精装修 CSS：让界面像一个高端教研软件
+# 2. 注入 CSS 样式
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
@@ -25,53 +24,73 @@ st.markdown("""
         margin-bottom: 20px;
         border: 1px solid #e2e8f0;
     }
-    .stButton>button { border-radius: 8px; height: 3em; transition: 0.3s; }
-    .stTextArea textarea { border-radius: 10px; }
-    .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-    .stTabs [data-baseweb="tab"] {
-        padding: 10px 25px;
-        background-color: #f1f5f9;
-        border-radius: 8px 8px 0 0;
-        font-weight: 600;
-    }
     </style>
     """, unsafe_allow_html=True)
 
-# 3. 侧边栏：核心身份识别与 Key 配置
+# 3. 侧边栏
 with st.sidebar:
-    st.image("https://img.icons8.com/fluency/96/teacher.png", width=60)
     st.title("教研配置中心")
-    
-    with st.expander("🔑 接口授权", expanded=True):
-        ds_api_key = st.text_input("DeepSeek API Key", type="password", help="在此输入您的 API 密钥")
-        jina_key = st.text_input("Jina Reader Key", type="password", help="用于解析网页链接内容")
-    
+    ds_api_key = st.text_input("DeepSeek API Key", type="password")
+    jina_key = st.text_input("Jina Reader Key", type="password")
     st.divider()
-    # 个性化隔离核心：根据识别码生成不同的数据库文件
-    user_tag = st.text_input("👤 教师识别码", placeholder="输入您的姓氏或工号")
+    user_tag = st.text_input("👤 教师识别码", placeholder="请输入您的名字")
     if not user_tag:
-        st.warning("⚠️ 请输入识别码以激活个人空间")
+        st.warning("请输入识别码以激活")
         st.stop()
-    
     DB_FILE = f"db_user_{user_tag}.csv"
-    st.success(f"已连接：{user_tag} 的专属库")
 
-# 4. 辅助函数：抓取网页内容
+# 4. 辅助函数
 def fetch_web_text(url, key):
-    if not key: return "ERR_NO_JINA_KEY"
     try:
-        # 使用 Jina Reader 转换为文本，防止 AI 瞎编
         res = requests.get(f"https://r.jina.ai/{url}", headers={"Authorization": f"Bearer {key}"}, timeout=15)
-        return res.text[:5000] # 截取前5000字，防止 Token 溢出
+        return res.text[:5000]
     except:
-        return "ERR_NETWORK"
+        return "抓取失败，请检查链接或 Key"
 
-# 5. 主界面布局
+# 5. 主界面
 st.title("🏛️ 政治教学素材智能加工平台")
 tab_process, tab_library = st.tabs(["✨ 素材加工中心", "🗄️ 我的数字化素材库"])
 
-# --- TAB 1: 素材加工中心 ---
 with tab_process:
     col_l, col_r = st.columns([2, 3], gap="large")
     
     with col_l:
+        st.subheader("📍 输入素材源")
+        in_type = st.radio("素材形式", ["手动粘贴", "网页链接"], horizontal=True)
+        
+        final_content = ""
+        if in_type == "网页链接":
+            web_url = st.text_input("在此粘贴链接")
+            if st.button("🔌 抓取网页原文"):
+                if not jina_key:
+                    st.error("请填入 Jina Key")
+                else:
+                    with st.spinner("抓取中..."):
+                        fetched = fetch_web_text(web_url, jina_key)
+                        st.session_state['web_data'] = fetched
+            final_content = st.session_state.get('web_data', "")
+        else:
+            final_content = st.text_area("在此粘贴文字", height=300)
+        
+        input_title = st.text_input("素材标题")
+        analyze_trigger = st.button("🚀 开始 AI 深度解析")
+
+    with col_r:
+        st.subheader("🧠 解析结果")
+        if analyze_trigger:
+            if not ds_api_key or not final_content:
+                st.error("请检查 Key 和输入内容")
+            else:
+                client = OpenAI(api_key=ds_api_key, base_url="https://api.deepseek.com")
+                with st.spinner("DeepSeek 解析中..."):
+                    prompt = f"你是一位特级政治教师。请对标高中政治必修1-4教材解析该素材：\n{final_content}"
+                    resp = client.chat.completions.create(
+                        model="deepseek-chat",
+                        messages=[{"role":"user","content":prompt}]
+                    )
+                    st.session_state['last_ai_res'] = resp.choices[0].message.content
+        
+        if 'last_ai_res' in st.session_state:
+            st.markdown(st.session_state['last_ai_res'])
+            if st.button("📥 保存到我的素材库"):
+                save_data = {"日期": datetime.now().strftime("%Y-%m-%d"), "标题": input_title, "解析": st.session_state['last_ai_res
