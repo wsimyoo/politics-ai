@@ -6,26 +6,16 @@ from datetime import datetime
 import hashlib
 import re
 
-# 1. 页面高级配置
+# 1. 页面配置
 st.set_page_config(page_title="思政名师智能素材库", layout="wide", page_icon="🏛️")
 
-# 自定义 CSS：渲染荧光笔、红字、教材标签
+# 自定义 CSS：渲染荧光笔、红字、卡片
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
-    /* 荧光笔高亮：强制黄色背景 */
-    mark { 
-        background-color: #ffff00 !important; 
-        color: #000 !important; 
-        padding: 0 3px; 
-        border-radius: 3px; 
-        font-weight: bold;
-    }
-    /* 重点红字 */
+    mark { background-color: #ffff00 !important; color: #000 !important; padding: 0 3px; border-radius: 3px; font-weight: bold; }
     .important-red { color: #e11d48 !important; font-weight: bold; }
-    /* 卡片美化 */
     .stExpander { border: 1px solid #e2e8f0 !important; border-radius: 12px !important; background: white !important; margin-bottom: 10px !important; }
-    /* 教材色块标签 */
     .book-tag { 
         background: #fee2e2; color: #b91c1c; padding: 2px 8px; border-radius: 4px; 
         font-size: 12px; font-weight: bold; display: block; margin-bottom: 5px; 
@@ -34,7 +24,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# 2. 核心后端引擎
+# 2. 后端逻辑
 def get_user_id(api_key):
     return hashlib.md5(api_key.encode()).hexdigest()[:8]
 
@@ -46,11 +36,9 @@ def get_available_books():
     return [f.replace('.pdf', '').replace('.PDF', '').replace('高中政治', '').strip() for f in files]
 
 def auto_highlight_fix(text):
-    """将 AI 习惯性使用的 **加粗** 强制转为 <mark> 荧光笔标签"""
     return re.sub(r'\*\*(.*?)\*\*', r'<mark>\1</mark>', text)
 
 def load_and_fix_db(file_path):
-    """自动修复旧数据列名，防止报错"""
     standard_cols = ["日期", "标题", "涉及教材", "考点设问", "素材原文"]
     if not os.path.exists(file_path): return pd.DataFrame(columns=standard_cols)
     try:
@@ -63,7 +51,7 @@ def load_and_fix_db(file_path):
     except:
         return pd.DataFrame(columns=standard_cols)
 
-# 3. 登录与侧边栏（含导出功能）
+# 3. 身份校验与导出
 if 'api_key' not in st.session_state: st.session_state['api_key'] = None
 
 if not st.session_state['api_key']:
@@ -71,7 +59,7 @@ if not st.session_state['api_key']:
     col_l, col_m, col_r = st.columns([1, 2, 1])
     with col_m:
         st.title("🏛️ 思政名师工作室")
-        input_key = st.text_input("请输入 DeepSeek API Key", type="password")
+        input_key = st.text_input("DeepSeek API Key", type="password")
         if st.button("🚀 进入工作室", use_container_width=True):
             if len(input_key) > 10:
                 st.session_state['api_key'] = input_key
@@ -96,46 +84,53 @@ else:
 
     tab1, tab2 = st.tabs(["✨ 素材智能加工", "📂 结构化全景看板"])
 
-    # --- TAB 1: 核心【跨教材关联分析】录入区 ---
+    # TAB 1: 核心【双重解析】逻辑
     with tab1:
         left_c, right_c = st.columns([1.2, 1])
         with left_c:
             with st.container(border=True):
                 m_title = st.text_input("素材标题")
                 m_raw = st.text_area("素材原文", height=150)
-                m_books = st.multiselect("关联多本教材（AI 将进行跨模块深度联动分析）", options=book_options)
+                m_books = st.multiselect("关联教材（选择多本以开启联动分析）", options=book_options)
                 
-                if st.button("🧠 开启跨教材深度高亮分析", use_container_width=True):
+                if st.button("🧠 开启多维高亮分析", use_container_width=True):
                     if not m_title or not m_books:
-                        st.warning("请补齐标题并选择至少一本教材")
+                        st.warning("请补全标题并选择教材")
                     else:
                         client = OpenAI(api_key=st.session_state['api_key'], base_url="https://api.deepseek.com")
-                        with st.spinner("AI 正在跨模块联想并涂抹荧光笔..."):
-                            # 核心：重写了强调“跨教材逻辑关联”的提示词
-                            prompt = f"""你是一位高中政治名师。请深入分析素材《{m_title}》在以下多本教材中的交叉考点：{', '.join(m_books)}。
+                        with st.spinner("正在进行多教材联觉分析..."):
+                            # 终极提示词：要求【各教材独立分析】+【跨教材综合联动】
+                            prompt = f"""你是一位高中政治名师。请针对素材《{m_title}》在以下教材中进行深度教研分析：{', '.join(m_books)}。
                             
-                            请按以下教研逻辑输出：
-                            1. 【跨模块联动】：不要简单罗列，要分析这几本教材的知识点如何通过该素材产生内在逻辑联系（例如：必修2的经济现象如何体现必修4的哲学逻辑）。
-                            2. 【标记语法】：严禁加粗。核心考点必须包裹在 <mark> 和 </mark> 之间；核心金句用 <span class='important-red'> 和 </span> 包围。
-                            3. 【教学设问】：给出 1-2 个高质量的课堂设问。
+                            请按以下【三段式结构】输出，禁止使用加粗，必须使用 <mark>高亮</mark>：
                             
+                            ### 1️⃣ 各教材分册解析
+                            针对所选的每一本教材，分别列出其对应的核心考点。
+                            
+                            ### 2️⃣ 跨教材联动分析
+                            分析这些不同教材的知识点如何通过该素材产生内在逻辑关联（例如必修2的案例如何支撑必修4的哲学结论）。
+                            
+                            ### 3️⃣ 综合教学设问
+                            给出 1-2 个高质量的综合性设问。
+                            
+                            排版规范：核心词用 <mark> 标签，关键结论用 <span class='important-red'> 标签。
                             素材原文：{m_raw}"""
+                            
                             resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}])
-                            # AI 生成后立即执行自动高亮修复
                             st.session_state['buffer'] = auto_highlight_fix(resp.choices[0].message.content)
 
             if 'buffer' in st.session_state:
-                st.markdown("✍️ **精修预览**")
-                final_res = st.text_area("考点解析", value=st.session_state['buffer'], height=300)
+                st.markdown("✍️ **预览与精修**")
+                final_res = st.text_area("考点解析", value=st.session_state['buffer'], height=350)
                 if st.button("💾 确认入库", use_container_width=True):
                     df = load_and_fix_db(db_file)
                     new_row = {"日期": datetime.now().strftime("%Y-%m-%d"), "标题": m_title, "涉及教材": " | ".join(m_books), "考点设问": final_res, "素材原文": m_raw}
                     pd.concat([df, pd.DataFrame([new_row])], ignore_index=True).to_csv(db_file, index=False, encoding='utf-8-sig')
-                    st.success("入库成功！已同步至看板与导出。")
+                    st.success("入库成功！")
                     del st.session_state['buffer']
                     st.rerun()
 
-    # --- TAB 2: 结构化看板 ---
+    # TAB 2: 结构化分列看板
     with tab2:
         df = load_and_fix_db(db_file)
         if not df.empty:
@@ -143,25 +138,24 @@ else:
             st.dataframe(df[["日期", "标题", "涉及教材"]], use_container_width=True, hide_index=True)
             
             st.divider()
-            st.subheader("📖 结构化看板")
-            
-            q = st.text_input("🔍 搜索素材...")
+            st.subheader("📖 结构化看板 (高亮分列视图)")
+            q = st.text_input("🔍 搜索素材关键词...")
             show_df = df[df.apply(lambda r: r.astype(str).str.contains(q).any(), axis=1)] if q else df
             
             for i, row in show_df.iloc[::-1].iterrows():
                 with st.expander(f"📌 {row['涉及教材']} | {row['标题']}"):
                     col_l, col_r = st.columns([1, 2.5])
                     with col_l:
-                        st.markdown("**📚 关联教材**")
+                        st.markdown("**📚 涉及教材**")
                         for b in str(row['涉及教材']).split(" | "):
                             st.markdown(f"<span class='book-tag'>{b}</span>", unsafe_allow_html=True)
                     with col_r:
-                        st.markdown("**💡 深度联动解析**")
+                        st.markdown("**💡 深度教研解析（含跨教材联动）**")
                         st.markdown(row['考点设问'], unsafe_allow_html=True)
                     
                     st.divider()
                     st.caption(f"素材原文参考：{row.get('素材原文', '')}")
-                    if st.button(f"🗑️ 删除记录", key=f"del_{i}"):
+                    if st.button(f"🗑️ 删除此记录", key=f"del_{i}"):
                         df.drop(i).to_csv(db_file, index=False, encoding='utf-8-sig')
                         st.rerun()
 
