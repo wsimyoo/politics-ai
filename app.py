@@ -5,22 +5,45 @@ import os
 from datetime import datetime
 import hashlib
 
-# 1. 页面配置
-st.set_page_config(page_title="思政名师智库", layout="wide", page_icon="🏛️")
+# 1. 页面配置与视觉优化
+st.set_page_config(page_title="思政名师智能素材库", layout="wide", page_icon="🏛️")
 
-# 自定义样式：让表格和卡片层次分明
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
-    .material-card { background: white; padding: 18px; border-radius: 12px; border-top: 5px solid #b91c1c; box-shadow: 0 4px 6px rgba(0,0,0,0.05); margin-bottom: 20px; }
-    .stDataFrame { border-radius: 10px; overflow: hidden; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    /* 卡片样式 */
+    .material-card { 
+        background: white; 
+        padding: 20px; 
+        border-radius: 12px; 
+        border-top: 5px solid #b91c1c; 
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05); 
+        margin-bottom: 20px; 
+    }
+    /* 侧边栏及其他UI微调 */
+    .stDataFrame { border: 1px solid #e2e8f0; border-radius: 8px; }
+    .editor-container { background-color: #fffbeb; padding: 20px; border-radius: 12px; border: 1px solid #fcd34d; margin-top: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
+# 2. 工具函数
 def get_user_id(api_key):
+    """根据API Key生成唯一用户ID，确保数据隔离"""
     return hashlib.md5(api_key.encode()).hexdigest()[:8]
 
-# --- 登录逻辑 ---
+def get_available_books():
+    """获取并净化教材名称，解决显示不全问题"""
+    data_path = "data"
+    if not os.path.exists(data_path):
+        return ["请创建data文件夹"]
+    # 兼容 .pdf 和 .PDF，并排序
+    files = [f for f in os.listdir(data_path) if f.lower().endswith('.pdf')]
+    files.sort()
+    # 净化名称显示：去掉后缀，去掉常见冗余词
+    cleaned_names = [f.replace('.pdf', '').replace('.PDF', '').replace('高中政治', '').strip() for f in files]
+    return cleaned_names if cleaned_names else ["未检测到教材"]
+
+# 3. 登录权限检查
 if 'api_key' not in st.session_state:
     st.session_state['api_key'] = None
 
@@ -29,125 +52,148 @@ if not st.session_state['api_key']:
     col_l, col_m, col_r = st.columns([1, 2, 1])
     with col_m:
         st.title("🏛️ 思政名师专属素材空间")
+        st.info("请输入您的 API Key 开启云端教研库。系统将根据 Key 自动隔离您的私人数据。")
         input_key = st.text_input("DeepSeek API Key", type="password")
-        if st.button("🚀 开启工作室", use_container_width=True):
+        if st.button("🚀 进入工作室", use_container_width=True):
             if len(input_key) > 10:
                 st.session_state['api_key'] = input_key
                 st.session_state['user_id'] = get_user_id(input_key)
                 st.rerun()
+            else:
+                st.error("请输入有效的 API Key")
 else:
     user_id = st.session_state['user_id']
     user_db = f"material_lib_{user_id}.csv"
     
+    # --- 侧边栏：管理与导出 ---
     with st.sidebar:
-        st.header(f"👤 工作 ID: {user_id}")
-        if st.button("🚪 退出登录"):
+        st.header(f"👤 老师 ID: {user_id}")
+        if st.button("🚪 退出当前工作室"):
             st.session_state['api_key'] = None
             st.rerun()
         st.divider()
+        st.subheader("📥 离线备份")
         if os.path.exists(user_db):
-            df_export = pd.read_csv(user_db)
-            csv = df_export.to_csv(index=False).encode('utf-8-sig')
-            st.download_button("📥 导出教研清单 (Excel/CSV)", data=csv, file_name=f"思政素材清单_{user_id}.csv", use_container_width=True)
+            df_exp = pd.read_csv(user_db)
+            csv_data = df_exp.to_csv(index=False).encode('utf-8-sig')
+            st.download_button("下载全部素材 (Excel/CSV)", data=csv_data, file_name=f"素材导出_{user_id}.csv", use_container_width=True)
+        st.caption("提示：若上传了新教材没看到，请尝试刷新页面或点击右上角三点-Clear cache。")
 
-    tab1, tab2 = st.tabs(["✨ 素材智能加工", "📂 全景教研看板"])
+    # --- 主功能区：Tab 切换 ---
+    tab1, tab2 = st.tabs(["✨ 智能加工入库", "📂 全景教研看板"])
 
-    # --- TAB 1: 录入（保持逻辑不变） ---
+    # TAB 1: 录入加工
     with tab1:
         left_c, right_c = st.columns([1.2, 1])
         with left_c:
+            st.subheader("✍️ 素材跨教材加工")
             with st.container(border=True):
-                m_title = st.text_input("素材标题")
-                m_raw = st.text_area("素材原文", height=150)
-                data_path = "data"
-                raw_books = [f for f in os.listdir(data_path) if f.endswith('.pdf')] if os.path.exists(data_path) else ["必修1", "必修2", "必修3", "必修4"]
-                available_books = [f.replace('.pdf', '').replace('高中政治', '') for f in raw_books]
-                m_books = st.multiselect("关联教材", available_books, default=available_books[:1] if available_books else None)
+                m_title = st.text_input("1. 素材标题", placeholder="如：‘新质生产力’带动产业升级")
+                m_raw = st.text_area("2. 素材原文内容", height=150, placeholder="粘贴时政报道或案例原文...")
+                
+                # 获取教材列表
+                book_options = get_available_books()
+                m_books = st.multiselect("3. 关联教材（可多选，实现逻辑跨越）", options=book_options)
                 
                 if st.button("🧠 AI 跨教材深度分析", use_container_width=True):
-                    client = OpenAI(api_key=st.session_state['api_key'], base_url="https://api.deepseek.com")
-                    with st.spinner("教研分析中..."):
-                        prompt = f"分析《{m_title}》在《{'、'.join(m_books)}》中的核心知识点并给出设问。要求简洁专业。\n原文：{m_raw}"
-                        resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}])
-                        st.session_state['buffer'] = resp.choices[0].message.content
+                    if not m_title or not m_raw or not m_books:
+                        st.warning("请完整填写标题、内容并选择至少一本教材")
+                    else:
+                        client = OpenAI(api_key=st.session_state['api_key'], base_url="https://api.deepseek.com")
+                        with st.spinner("AI 正在联动教材解析知识点..."):
+                            prompt = f"""你是一位高中政治特级教师。请分析素材《{m_title}》在《{'、'.join(m_books)}》等教材中的核心考点。
+                            要求：
+                            1. 【跨教材定位】：分教材列出知识点（如：【必修2】... 【必修4】...）。
+                            2. 【教学设问】：给出1-2个高质量课堂设问。
+                            素材内容：{m_raw}"""
+                            try:
+                                resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}])
+                                st.session_state['analysis_buffer'] = resp.choices[0].message.content
+                            except Exception as e:
+                                st.error(f"分析请求失败，请检查Key或网络：{e}")
 
-            if 'buffer' in st.session_state:
-                st.markdown('<div class="editor-container" style="background:#fffbeb; padding:15px; border-radius:10px; border:1px solid #fcd34d;">', unsafe_allow_html=True)
-                refined_analysis = st.text_area("✍️ 老师精修（考点、建议）", value=st.session_state['buffer'], height=300)
-                if st.button("💾 归档素材库", use_container_width=True):
-                    # 提取前100字作为知识点预览存入
-                    new_data = {"日期": datetime.now().strftime("%Y-%m-%d"), "标题": m_title, "涉及教材": " | ".join(m_books), "核心解析": refined_analysis, "原文内容": m_raw}
-                    df = pd.read_csv(user_db) if os.path.exists(user_db) else pd.DataFrame(columns=["日期","标题","涉及教材","核心解析","原文内容"])
-                    df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
+            # 老师精修区
+            if 'analysis_buffer' in st.session_state:
+                st.markdown('<div class="editor-container">', unsafe_allow_html=True)
+                st.markdown("✍️ **老师精修区**（您可以根据实际教学调整 AI 的表述）")
+                final_analysis = st.text_area("考点分析与设问建议", value=st.session_state['analysis_buffer'], height=300)
+                
+                if st.button("💾 确认并存入档案库", use_container_width=True):
+                    new_entry = {
+                        "日期": datetime.now().strftime("%Y-%m-%d"),
+                        "标题": m_title,
+                        "关联教材": " | ".join(m_books),
+                        "核心知识点": final_analysis,
+                        "原文": m_raw
+                    }
+                    df = pd.read_csv(user_db) if os.path.exists(user_db) else pd.DataFrame(columns=["日期","标题","关联教材","核心知识点","原文"])
+                    df = pd.concat([df, pd.DataFrame([new_entry])], ignore_index=True)
                     df.to_csv(user_db, index=False, encoding='utf-8-sig')
-                    st.success("存档成功！")
-                    del st.session_state['buffer']
+                    st.success("✅ 素材归档成功！")
+                    del st.session_state['analysis_buffer']
                     st.rerun()
                 st.markdown('</div>', unsafe_allow_html=True)
-        
-        with right_c:
-            st.info("💡 操作提示：\n1. 标题起得好，日后搜索没烦恼。\n2. AI 分析完成后，别忘了在编辑区加入您独特的教学视角。")
 
-    # --- TAB 2: 完善后的全景教研看板 ---
+        with right_c:
+            st.subheader("💡 教研建议")
+            st.info("您可以一次性勾选《必修2》和《必修4》，AI 会自动为您构建‘经济生活’与‘哲学逻辑’的跨课桥梁。")
+
+    # TAB 2: 全景看板 (表格 + 卡片)
     with tab2:
         if os.path.exists(user_db):
             full_df = pd.read_csv(user_db).fillna("")
             
-            # 兼容性处理
-            if '核心解析' not in full_df.columns and '核心知识点' in full_df.columns:
-                full_df.rename(columns={'核心知识点': '核心解析'}, inplace=True)
-            elif '核心解析' not in full_df.columns and '精修解析' in full_df.columns:
-                full_df.rename(columns={'精修解析': '核心解析'}, inplace=True)
+            # 字段名兼容性修复（解决 Key报错）
+            name_map = {'精修解析': '核心知识点', '核心解析': '核心知识点', '分析结果': '核心知识点'}
+            for old_name, new_name in name_map.items():
+                if old_name in full_df.columns and new_name not in full_df.columns:
+                    full_df.rename(columns={old_name: new_name}, inplace=True)
 
-            st.subheader("📖 结构化教研清单")
-            st.caption("在表格任意处点击或搜索，实现高效检索。")
+            st.subheader("📖 结构化素材清单表")
+            # 搜索过滤
+            search_q = st.text_input("🔍 全库搜索（标题、教材、考点关键词）")
+            if search_q:
+                full_df = full_df[full_df.apply(lambda r: r.astype(str).str.contains(search_q).any(), axis=1)]
 
-            # 构建表格视图数据
-            # 这里的 .apply 用于生成简洁的“知识点一览”，剔除换行，保持整齐
+            # 强化表格索引视图
             view_df = full_df.copy()
-            view_df['考点概要'] = view_df['核心解析'].apply(lambda x: str(x).replace('\n', ' ')[:100] + '...')
+            view_df['知识预览'] = view_df['核心知识点'].apply(lambda x: str(x).replace('\n', ' ')[:80] + '...')
             
-            # 使用更强大的 Dataframe 展示
             st.dataframe(
-                view_df[["日期", "标题", "涉及教材", "考点概要"]],
+                view_df[["日期", "标题", "关联教材", "知识预览"]],
                 use_container_width=True,
                 hide_index=True,
                 column_config={
-                    "日期": st.column_config.Column("入库日期", width="small"),
-                    "标题": st.column_config.Column("素材名称", width="medium"),
-                    "涉及教材": st.column_config.Column("涉及书目", width="medium"),
-                    "考点概要": st.column_config.Column("核心知识点预览", width="large")
+                    "日期": st.column_config.Column(width="small"),
+                    "标题": st.column_config.Column("素材标题", width="medium"),
+                    "关联教材": st.column_config.Column("对应书目", width="medium"),
+                    "知识预览": st.column_config.Column("核心考点一览", width="large"),
                 }
             )
 
             st.divider()
 
-            # 下方保留完整的卡片展示
-            st.subheader("🗂️ 详细教研档案卡片")
-            q = st.text_input("🔍 搜索过滤卡片...", placeholder="输入教材或关键词...")
-            
-            filtered_df = full_df[full_df.apply(lambda r: r.astype(str).str.contains(q).any(), axis=1)] if q else full_df
-            
-            for i, row in filtered_df.iloc[::-1].iterrows():
+            # 详细卡片视图
+            st.subheader("🗂️ 详细档案卡片")
+            for i, row in full_df.iloc[::-1].iterrows():
                 with st.container():
                     st.markdown(f"""
                     <div class="material-card">
-                        <span style="font-size:12px; color:#b91c1c; font-weight:bold;">[{row['涉及教材']}]</span>
+                        <small style="color:#b91c1c; font-weight:bold;">{row['关联教材']}</small>
                         <h3 style="margin:5px 0;">{row['标题']}</h3>
-                        <p style="font-size:13px; color:#64748b;">存档日期：{row['日期']}</p>
+                        <p style="font-size:12px; color:gray;">入库日期：{row['日期']}</p>
                     </div>
                     """, unsafe_allow_html=True)
-                    
-                    with st.expander("点击展开：考点解析与原文详情"):
+                    with st.expander("查看完整分析与原文内容"):
                         c1, c2 = st.columns([1.5, 1])
                         with c1:
-                            st.markdown("**【教研解析】**")
-                            st.write(row['核心解析'])
+                            st.markdown("**【跨教材教研分析】**")
+                            st.write(row['核心知识点'])
                         with c2:
-                            st.markdown("**【素材原文】**")
-                            st.caption(row.get('原文内容', row.get('原文', "无")))
-                        if st.button(f"🗑️ 删除该素材记录", key=f"del_{i}"):
+                            st.markdown("**【原文参考】**")
+                            st.caption(row.get('原文', "无原文信息"))
+                        if st.button(f"🗑️ 删除该条素材", key=f"del_{i}"):
                             full_df.drop(i).to_csv(user_db, index=False, encoding='utf-8-sig')
                             st.rerun()
         else:
-            st.info("库内尚无素材。")
+            st.info("您的档案库还是空的，快去加工第一条素材吧！")
