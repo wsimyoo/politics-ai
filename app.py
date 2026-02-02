@@ -6,161 +6,167 @@ import pdfplumber
 from datetime import datetime
 import hashlib
 
-# 1. 页面基础配置
-st.set_page_config(page_title="思政名师·专属教研空间", page_icon="🎓", layout="wide")
+st.set_page_config(page_title="我的思政素材库", page_icon="🗃️", layout="wide")
 
-# 自定义样式：区分登录前后的氛围
+# 自定义样式：强调“仓库”的感觉
 st.markdown("""
     <style>
-    .login-box { border: 2px solid #e5e7eb; padding: 40px; border-radius: 10px; text-align: center; max-width: 600px; margin: 0 auto; }
-    .main-header { font-size: 24px; font-weight: bold; color: #1e40af; }
+    .stApp { background-color: #f3f4f6; }
+    .input-card { background: white; padding: 20px; border-radius: 10px; border: 1px solid #e5e7eb; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+    .tag { display: inline-block; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 4px; font-size: 0.8em; margin-right: 5px; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- 核心工具函数 ---
-
-def get_user_id(api_key):
-    """将API Key转化为唯一的简短用户ID (取哈希前8位)，保护Key的隐私同时区分用户"""
+# --- 核心：用户隔离与读取 ---
+def get_user_hash(api_key):
     return hashlib.md5(api_key.encode()).hexdigest()[:8]
 
 @st.cache_data(show_spinner=False)
-def load_book_content(file_name):
-    """读取公共教材库"""
-    path = os.path.join("data", file_name)
-    text = ""
-    try:
-        with pdfplumber.open(path) as pdf:
-            for page in pdf.pages[:50]:
-                content = page.extract_text()
-                if content: text += content + "\n"
-        return text
-    except: return ""
+def load_all_textbooks():
+    """读取所有教材，构建一个大的知识背景"""
+    data_dir = "data"
+    combined_text = ""
+    if not os.path.exists(data_dir): return ""
+    files = [f for f in os.listdir(data_dir) if f.endswith('.pdf')]
+    for f in files:
+        try:
+            with pdfplumber.open(os.path.join(data_dir, f)) as pdf:
+                # 每本书提取前40页作为索引依据
+                for page in pdf.pages[:40]:
+                    txt = page.extract_text()
+                    if txt: combined_text += txt + "\n"
+        except: pass
+    return combined_text
 
-# --- 初始化 Session State (记忆用户登录状态) ---
+# --- 登录逻辑 ---
 if 'api_key' not in st.session_state:
     st.session_state['api_key'] = None
-if 'user_id' not in st.session_state:
-    st.session_state['user_id'] = None
 
-# =================================================
-# 🚪 第一阶段：登录界面 (如果没有登录)
-# =================================================
 if not st.session_state['api_key']:
-    st.markdown("<br><br><br>", unsafe_allow_html=True)
-    c1, c2, c3 = st.columns([1, 2, 1])
+    c1, c2, c3 = st.columns([1,2,1])
     with c2:
-        st.markdown('<div class="login-box">', unsafe_allow_html=True)
-        st.title("🎓 欢迎回到教研工作室")
-        st.write("一把钥匙开一把锁：输入 Key 即刻进入您的专属空间")
-        
-        input_key = st.text_input("请输入 DeepSeek API Key", type="password")
-        
-        if st.button("🚀 进入工作室", use_container_width=True):
-            if len(input_key) > 10:
-                st.session_state['api_key'] = input_key
-                st.session_state['user_id'] = get_user_id(input_key)
-                st.rerun() # 刷新页面进入主系统
-            else:
-                st.error("请输入有效的 API Key")
-        
-        st.markdown('</div>', unsafe_allow_html=True)
-
-# =================================================
-# 🏠 第二阶段：主系统 (登录后显示)
-# =================================================
+        st.title("🗃️ 个人专属素材库")
+        st.info("输入您的 Key，系统将自动加载您个人的素材档案。")
+        k = st.text_input("DeepSeek API Key", type="password")
+        if st.button("🔓 打开我的素材库", use_container_width=True):
+            if len(k) > 5:
+                st.session_state['api_key'] = k
+                st.session_state['user_id'] = get_user_hash(k)
+                st.rerun()
 else:
-    # 获取当前用户的专属ID
-    current_user = st.session_state['user_id']
-    # 定义专属数据库文件名
-    user_db_file = f"history_{current_user}.csv"
+    # --- 登录后的主界面 ---
+    user_id = st.session_state['user_id']
+    db_file = f"library_{user_id}.csv" # 每个人的库文件名不一样
     
-    # 侧边栏：用户信息与书架
+    # 预加载教材背景
+    with st.spinner("正在连接云端教材库..."):
+        textbook_context = load_all_textbooks()
+
+    # 侧边栏
     with st.sidebar:
-        st.info(f"👤 当前用户ID: {current_user}")
-        if st.button("🚪 退出登录"):
+        st.write(f"👤 用户ID: `{user_id}`")
+        if st.button("退出"):
             st.session_state['api_key'] = None
             st.rerun()
-            
         st.divider()
-        st.subheader("📚 公共教材库")
-        
-        # 自动读取 data 文件夹
-        data_dir = "data"
-        if not os.path.exists(data_dir): os.makedirs(data_dir)
-        books = [f for f in os.listdir(data_dir) if f.endswith('.pdf')]
-        
-        if books:
-            selected_book = st.selectbox("选择教材", books)
+        st.markdown("### 📊 库内统计")
+        if os.path.exists(db_file):
+            df = pd.read_csv(db_file)
+            st.metric("已收录素材", f"{len(df)} 条")
         else:
-            st.warning("公共书架为空")
-            selected_book = None
+            st.metric("已收录素材", "0 条")
 
-    # 主区域
-    st.title("🏛️ 智能教研工作台")
-    
-    tab1, tab2 = st.tabs(["✨ 备课", "📂 我的档案"])
-    
-    # 预加载教材
-    context = ""
-    if selected_book:
-        with st.spinner("正在调阅教材..."):
-            context = load_book_content(selected_book)
+    st.title("🗃️ 智能素材加工厂")
+
+    # 页面布局：左边录入，右边查看
+    tab1, tab2 = st.tabs(["➕ 素材入库 (AI 自动打标)", "🔍 检索我的库"])
 
     with tab1:
-        user_input = st.text_area("输入备课需求：", height=200)
-        if st.button("生成方案", use_container_width=True):
-            if not context:
-                st.error("请先确保 data 文件夹有书")
+        st.markdown('<div class="input-card">', unsafe_allow_html=True)
+        col1, col2 = st.columns([3, 1])
+        with col1:
+            material_title = st.text_input("素材标题", placeholder="例如：2024央视春晚小品《...》")
+        with col2:
+            material_type = st.selectbox("类型", ["时政新闻", "生活案例", "名言警句", "典故历史"])
+            
+        material_content = st.text_area("粘贴素材内容", height=200, placeholder="在这里粘贴原文...")
+        
+        if st.button("✨ AI 智能分析并入库", use_container_width=True):
+            if not textbook_context:
+                st.error("请先在 GitHub data 文件夹上传教材！")
+            elif not material_content:
+                st.warning("请填写内容")
             else:
                 client = OpenAI(api_key=st.session_state['api_key'], base_url="https://api.deepseek.com")
-                with st.spinner("AI 正在思考..."):
-                    # 这里使用了简化的提示词，您可以根据需要加强
-                    prompt = f"基于教材{selected_book}，回答：{user_input}\n教材内容：{context[:10000]}"
+                with st.spinner("AI 正在翻阅教材，为您匹配考点..."):
+                    # 这是一个专门用于“打标签”的 Prompt
+                    prompt = f"""
+                    你是一个严谨的教材档案管理员。
+                    参考教材内容：{textbook_context[:20000]}
+                    
+                    待分析素材：
+                    标题：{material_title}
+                    内容：{material_content}
+                    
+                    请分析该素材与高中政治教材的联系，并严格按以下格式输出（不要废话）：
+                    
+                    适用教材：(例如：必修1、必修3)
+                    核心考点：(提取3-5个最相关的关键词，用顿号隔开)
+                    适用分析：(用一句话概括这个素材适合用来说明什么原理，50字以内)
+                    """
+                    
                     try:
                         resp = client.chat.completions.create(
                             model="deepseek-chat",
                             messages=[{"role": "user", "content": prompt}]
                         )
-                        result = resp.choices[0].message.content
-                        st.session_state['last_result'] = result
+                        ai_result = resp.choices[0].message.content
+                        
+                        # 解析 AI 返回的结果 (这里做一个简单的分割处理，实际可以更复杂)
+                        # 为了演示稳定，我们直接把 AI 的整段回复存进去，或者让 AI 返回 JSON
+                        # 这里简单处理，直接存
+                        
+                        new_data = {
+                            "录入时间": datetime.now().strftime("%Y-%m-%d"),
+                            "标题": material_title,
+                            "类型": material_type,
+                            "原文摘要": material_content[:50]+"...", # 只存前50字预览
+                            "AI智能标签": ai_result, # 存入 AI 分析的全部内容
+                            "完整内容": material_content
+                        }
+                        
+                        # 存入 CSV
+                        df = pd.read_csv(db_file) if os.path.exists(db_file) else pd.DataFrame(columns=["录入时间","标题","类型","原文摘要","AI智能标签","完整内容"])
+                        df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
+                        df.to_csv(db_file, index=False, encoding='utf-8-sig')
+                        
+                        st.success("✅ 已成功入库！")
+                        st.markdown(f"**AI 分析结果：**\n{ai_result}")
+                        
                     except Exception as e:
-                        st.error(f"出错：{e}")
-
-        # 显示结果并提供保存按钮
-        if 'last_result' in st.session_state:
-            st.markdown("---")
-            st.markdown(st.session_state['last_result'])
-            
-            c_save, c_title = st.columns([1, 3])
-            with c_title:
-                save_title = st.text_input("存档标题", placeholder="如：第三课教学设计")
-            with c_save:
-                st.write("") # 占位
-                st.write("") 
-                if st.button("💾 存入我的档案"):
-                    # 保存逻辑：只存入 user_db_file
-                    new_row = {"日期": datetime.now().strftime("%Y-%m-%d"), "教材": selected_book, "标题": save_title, "内容": st.session_state['last_result']}
-                    
-                    df = pd.read_csv(user_db_file) if os.path.exists(user_db_file) else pd.DataFrame(columns=["日期","教材","标题","内容"])
-                    df = pd.concat([df, pd.DataFrame([new_row])], ignore_index=True)
-                    df.to_csv(user_db_file, index=False)
-                    st.success("已存入您的个人库！")
+                        st.error(f"处理失败: {e}")
+        st.markdown('</div>', unsafe_allow_html=True)
 
     with tab2:
-        st.subheader("📂 我的专属教研历史")
-        # 只读取当前用户的 CSV
-        if os.path.exists(user_db_file):
-            history_df = pd.read_csv(user_db_file)
-            st.dataframe(history_df[["日期", "标题", "教材"]], use_container_width=True)
+        if os.path.exists(db_file):
+            df = pd.read_csv(db_file)
             
-            # 提供下载功能（防止云端重置丢失数据）
-            with open(user_db_file, "rb") as f:
-                st.download_button(
-                    label="📥 备份我的档案 (下载CSV)",
-                    data=f,
-                    file_name=f"archive_{current_user}.csv",
-                    mime="text/csv"
-                )
+            # 搜索框
+            search = st.text_input("🔍 搜索库内素材（支持标题、考点搜索）")
+            if search:
+                # 模糊搜索
+                df = df[df.apply(lambda row: row.astype(str).str.contains(search).any(), axis=1)]
+            
+            # 表格展示
+            st.dataframe(
+                df[["录入时间", "标题", "类型", "AI智能标签"]], 
+                use_container_width=True,
+                height=500
+            )
+            
+            # 下载备份
+            with open(db_file, "rb") as f:
+                st.download_button("📥 导出我的素材库 (Excel/CSV)", f, file_name=f"my_materials_{user_id}.csv")
         else:
-            st.info("您还没有存档记录，快去备课吧！")
+            st.info("您的库还是空的，快去录入第一条素材吧！")
 
