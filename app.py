@@ -3,24 +3,38 @@ import pandas as pd
 from github import Github
 import datetime
 
-# --- 1. 初始化设置 ---
+# --- 1. 页面基本配置 ---
 st.set_page_config(page_title="思政教研智库", layout="wide")
 
-# 从 Secrets 获取配置
-try:
+# --- 2. 登录状态控制 (新增逻辑) ---
+if 'authenticated' not in st.session_state:
+    st.session_state['authenticated'] = False
+
+# 如果还没登录，显示首页登录界面
+if not st.session_state['authenticated']:
+    st.markdown("<h1 style='text-align: center;'>🛡️ 思政教研智库</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center;'>请解锁您的私人教研空间</p>", unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns([1, 2, 1])
+    with col2:
+        input_key = st.text_input("输入 API Key 登录", type="password")
+        if input_key:
+            st.session_state['authenticated'] = True
+            st.session_state['api_key'] = input_key
+            st.rerun()
+    st.stop() # 强制停止，不显示下方内容
+
+# --- 3. 登录成功后，获取之前的配置 (保持不变) ---
+api_key = st.session_state['api_key']
+user_uid = api_key[:8]
+
+def get_github_repo():
     GH_TOKEN = st.secrets["GH_TOKEN"]
     GH_REPO = st.secrets["GH_REPO"]
-except:
-    st.sidebar.error("⚠️ 未配置 GitHub Token，数据将无法自动保存！")
-    GH_TOKEN = None
-
-# --- 2. 核心逻辑函数 ---
-def get_github_repo():
     g = Github(GH_TOKEN)
     return g.get_repo(GH_REPO)
 
 def load_data(uid):
-    """从 GitHub 读取属于该用户的 CSV 文件"""
     file_path = f"material_lib_{uid}.csv"
     try:
         repo = get_github_repo()
@@ -28,40 +42,29 @@ def load_data(uid):
         df = pd.read_csv(content.download_url)
         return df, content.sha
     except:
-        # 如果文件不存在，返回空表
         return pd.DataFrame(columns=['时间', '标题', '分类', '内容', '金句']), None
 
 def save_to_github(df, uid, sha):
-    """将数据保存回 GitHub"""
     file_path = f"material_lib_{uid}.csv"
     csv_content = df.to_csv(index=False)
     repo = get_github_repo()
     if sha:
-        repo.update_file(file_path, f"Update data for {uid}", csv_content, sha)
+        repo.update_file(file_path, f"Update {uid}", csv_content, sha)
     else:
-        repo.create_file(file_path, f"Initial data for {uid}", csv_content)
+        repo.create_file(file_path, f"Init {uid}", csv_content)
 
-# --- 3. 侧边栏 ---
-with st.sidebar:
-    st.title("🛡️ 思政教研智库")
-    api_key = st.text_input("输入 API Key 登录", type="password")
-    
-    if GH_TOKEN:
-        st.success("✅ 云端同步：已连接")
-    
-    page = st.radio("功能导航", ["📝 素材录入", "📂 结构化看板"])
-
-# 只有输入 Key 后才运行后续逻辑
-if not api_key:
-    st.info("请在左侧输入 API Key 开始工作")
-    st.stop()
-
-# 使用 API Key 的前 8 位作为用户唯一标识 (UID)
-user_uid = api_key[:8]
 df, file_sha = load_data(user_uid)
 
-# --- 4. 页面功能 ---
+# --- 4. 功能导航与侧边栏 (保持不变) ---
+with st.sidebar:
+    st.title("🛡️ 功能菜单")
+    st.success(f"当前用户: {user_uid}")
+    page = st.radio("功能导航", ["📝 素材录入", "📂 结构化看板"])
+    if st.button("退出登录"):
+        st.session_state['authenticated'] = False
+        st.rerun()
 
+# --- 5. 核心功能区 (保持不变) ---
 if page == "📝 素材录入":
     st.header("📝 新素材加工")
     col1, col2 = st.columns(2)
@@ -84,32 +87,20 @@ if page == "📝 素材录入":
         df = pd.concat([df, pd.DataFrame([new_data])], ignore_index=True)
         save_to_github(df, user_uid, file_sha)
         st.success("🎉 数据已安全存入云端仓库！")
-        st.balloons()
 
 elif page == "📂 结构化看板":
     st.header("📂 我的数字化教研室")
-    
     if df.empty:
-        st.warning("目前暂无存档素材，快去录入第一条吧！")
+        st.warning("暂无存档。")
     else:
-        # --- 恢复表格可视化 ---
         st.subheader("📊 汇总统计（表格模式）")
-        # 允许搜索和筛选的交互式表格
-        st.dataframe(
-            df, 
-            use_container_width=True, 
-            column_config={
-                "内容": st.column_config.TextColumn("详细内容", width="large"),
-                "时间": st.column_config.DatetimeColumn("录入时间")
-            }
-        )
+        st.dataframe(df, use_container_width=True)
         
         st.divider()
-        
-        # --- 保持卡片美化 ---
         st.subheader("🗂️ 素材精选（卡片模式）")
-        for index, row in df.iloc[::-1].iterrows(): # 倒序显示最新内容
+        for index, row in df.iloc[::-1].iterrows():
             with st.expander(f"📌 {row['分类']} | {row['标题']}"):
                 st.write(f"**录入时间：** {row['时间']}")
                 st.markdown(f"**【核心金句】** :red[{row['金句']}]")
-                st.info(row['content'] if 'content' in row else row['内容'])
+                st.info(row['内容'])
+
