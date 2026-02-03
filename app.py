@@ -1,10 +1,11 @@
 import streamlit as st
-import pandas as pd  # 修正：确保库名正确
+import pandas as pd
 from github import Github
 from openai import OpenAI
 import hashlib
 import re
 import io
+import time # 新增：用于生成时间戳
 from datetime import datetime
 
 # --- 1. 页面高级配置与视觉样式 ---
@@ -38,12 +39,17 @@ def get_available_books():
         return ["必修1", "必修2", "必修3", "必修4"]
 
 def load_from_cloud(uid):
+    """【核心补丁】加入时间戳，彻底解决存档后看板不刷新的问题"""
     file_path = f"material_lib_{uid}.csv"
     standard_cols = ["日期", "标题", "涉及教材", "考点设问", "素材原文"]
     try:
         repo = get_github_repo()
         content = repo.get_contents(file_path)
-        df = pd.read_csv(content.download_url)
+        
+        # 通过在 URL 后添加动态参数，强制浏览器跳过缓存读取真云端数据
+        fresh_url = f"{content.download_url}?t={int(time.time())}"
+        df = pd.read_csv(fresh_url)
+        
         rename_map = {'素材标题': '标题', '精修解析': '考点设问', '核心解析': '考点设问', '涉及教材': '涉及教材', '分类': '涉及教材'}
         df.rename(columns=rename_map, inplace=True)
         for col in standard_cols:
@@ -107,11 +113,9 @@ with tab1:
             if st.button("🧠 开启多维深度高亮分析", use_container_width=True):
                 if m_title and m_books and m_raw:
                     client = OpenAI(api_key=st.session_state['api_key'], base_url="https://api.deepseek.com")
-                    with st.spinner("跨册联动解析并涂抹重点中..."):
-                        prompt = f"""你是一位高中政治名师。请针对素材《{m_title}》在以下教材中进行教研分析：{', '.join(m_books)}。
-                        请按：1.分册解析 2.跨教材联动 3.教学设问 三段式输出。
-                        要求：严禁加粗。核心词包裹在 <mark> </mark> 中；关键结论用 <span class='important-red'> </span>。素材：{m_raw}"""
-                        
+                    with st.spinner("跨册联动解析中..."):
+                        prompt = f"""你是一位高中政治名师。请针对素材《{m_title}》在以下教材中进行分析：{', '.join(m_books)}。
+                        按分册解析、跨教材联动、教学设问输出。严禁加粗。核心词包裹在 <mark> </mark> 中；结论用 <span class='important-red'> </span>。原文：{m_raw}"""
                         resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}])
                         st.session_state['ai_output'] = re.sub(r'\*\*(.*?)\*\*', r'<mark>\1</mark>', resp.choices[0].message.content)
                 else:
@@ -123,21 +127,23 @@ with tab1:
             final_text = st.text_area("解析结果", value=st.session_state['ai_output'], height=450)
             if st.button("💾 确认归档入库", use_container_width=True):
                 new_row = {"日期": datetime.now().strftime("%Y-%m-%d"), "标题": m_title, "涉及教材": " | ".join(m_books), "考点设问": final_text, "素材原文": m_raw}
-                # 内存即时预更新
-                updated_df = pd.concat([df_cloud, pd.DataFrame([new_row])], ignore_index=True)
                 
-                repo = get_github_repo()
+                # 内存先更新，确保 rerun 后立刻能读到
+                updated_df = pd.concat([df_cloud, pd.DataFrame([new_row])], ignore_index=True)
                 csv_str = updated_df.to_csv(index=False, encoding='utf-8-sig')
                 
+                repo = get_github_repo()
+                # 再次获取真 SHA
                 _, latest_sha = load_from_cloud(uid)
                 if latest_sha:
                     repo.update_file(db_filename, "Save", csv_str, latest_sha)
                 else:
                     repo.create_file(db_filename, "Init", csv_str)
                 
-                st.success("✅ 已同步至云端看板！")
+                st.success("✅ 已同步至云端！页面即将刷新...")
                 if 'ai_output' in st.session_state:
                     del st.session_state['ai_output']
+                time.sleep(1) # 留给用户看一眼成功提示的时间
                 st.rerun()
 
 with tab2:
@@ -145,7 +151,6 @@ with tab2:
         st.subheader("📊 快速索引清单")
         st.dataframe(df_cloud[["日期", "标题", "涉及教材"]], use_container_width=True, hide_index=True)
         st.divider()
-        
         search = st.text_input("🔍 搜索库内素材...")
         show_df = df_cloud[df_cloud.apply(lambda r: r.astype(str).str.contains(search).any(), axis=1)] if search else df_cloud
         
@@ -166,5 +171,5 @@ with tab2:
                     get_github_repo().update_file(db_filename, "Delete", new_df.to_csv(index=False, encoding='utf-8-sig'), current_sha)
                     st.rerun()
     else:
-        st.info("库内尚无素材，请在加工页进行录入。")
+        st.info("库内尚无素材。")
 
