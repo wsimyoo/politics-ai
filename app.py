@@ -1,5 +1,5 @@
 import streamlit as st
-import pandas as pd
+import pd as pd
 from github import Github
 from openai import OpenAI
 import hashlib
@@ -7,15 +7,19 @@ import re
 import io
 from datetime import datetime
 
-# --- 1. 样式配置 ---
+# --- 1. 页面高级配置与视觉样式 ---
 st.set_page_config(page_title="思政名师智能素材库", layout="wide", page_icon="🏛️")
 
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
+    /* 荧光笔高亮：黄色背景 */
     mark { background-color: #ffff00 !important; color: #000 !important; padding: 0 3px; border-radius: 3px; font-weight: bold; }
+    /* 重点红字样式 */
     .important-red { color: #e11d48 !important; font-weight: bold; }
+    /* 卡片美化 */
     .stExpander { border: 1px solid #e2e8f0 !important; border-radius: 12px !important; background: white !important; margin-bottom: 10px !important; }
+    /* 教材色块标签 */
     .book-tag { 
         background: #fee2e2; color: #b91c1c; padding: 2px 8px; border-radius: 4px; 
         font-size: 12px; font-weight: bold; display: block; margin-bottom: 5px; 
@@ -24,11 +28,12 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- 2. 核心引擎函数 ---
+# --- 2. 核心后端引擎函数 ---
 def get_github_repo():
     return Github(st.secrets["GH_TOKEN"]).get_repo(st.secrets["GH_REPO"])
 
 def get_available_books():
+    """实时扫描 GitHub data/ 目录获取 PDF 教材列表"""
     try:
         repo = get_github_repo()
         files = repo.get_contents("data")
@@ -38,18 +43,22 @@ def get_available_books():
         return ["必修1", "必修2", "必修3", "必修4"]
 
 def load_from_cloud(uid):
+    """【防丢失关键】实时同步云端数据与最新 SHA 校验码"""
     file_path = f"material_lib_{uid}.csv"
     standard_cols = ["日期", "标题", "涉及教材", "考点设问", "素材原文"]
     try:
         repo = get_github_repo()
         content = repo.get_contents(file_path)
+        import pandas as pd # 确保 pandas 可用
         df = pd.read_csv(content.download_url)
-        rename_map = {'素材标题': '标题', '精修解析': '考点设问', '核心解析': '考点设问', '分类': '涉及教材'}
+        # 兼容性：自动对齐历史版本的各种列名
+        rename_map = {'素材标题': '标题', '精修解析': '考点设问', '核心解析': '考点设问', '涉及教材': '涉及教材', '分类': '涉及教材'}
         df.rename(columns=rename_map, inplace=True)
         for col in standard_cols:
             if col not in df.columns: df[col] = "未记录"
         return df[standard_cols], content.sha
     except:
+        import pandas as pd
         return pd.DataFrame(columns=standard_cols), None
 
 # --- 3. 登录权限拦截 (彻底修复 KeyError) ---
@@ -61,7 +70,7 @@ if not st.session_state['uid']:
     col_l, col_m, col_r = st.columns([1, 2, 1])
     with col_m:
         st.title("🏛️ 思政名师工作室")
-        input_key = st.text_input("请输入 DeepSeek API Key 登录", type="password")
+        input_key = st.text_input("请输入您的 DeepSeek API Key 登录", type="password")
         if st.button("🚀 开启工作室", use_container_width=True):
             if len(input_key) > 10:
                 st.session_state['api_key'] = input_key
@@ -69,22 +78,25 @@ if not st.session_state['uid']:
                 st.rerun()
             else:
                 st.error("请输入有效的 API Key")
-    # 关键点：如果没有登录，直接停止后面所有代码的执行，防止报错
+    # 强制停止：未登录状态下不运行后续业务逻辑
     st.stop()
 
-# --- 4. 只有登录成功才会执行到这里 ---
+# --- 4. 业务逻辑区 (只有登录后才可见) ---
 uid = st.session_state['uid']
 db_filename = f"material_lib_{uid}.csv"
 book_options = get_available_books()
+# 每次页面加载均优先拉取云端数据
+import pandas as pd
 df_cloud, current_sha = load_from_cloud(uid)
 
 # --- 侧边栏 ---
 with st.sidebar:
     st.header(f"👤 老师 ID: {uid}")
+    st.caption(f"📂 存档文件: {db_filename}")
     if st.button("🔄 强制同步云端数据", use_container_width=True):
         st.rerun()
     st.divider()
-    st.subheader("📥 成果导出")
+    st.subheader("📥 教研成果导出")
     if not df_cloud.empty:
         csv_io = io.BytesIO()
         df_cloud.to_csv(csv_io, index=False, encoding='utf-8-sig')
@@ -94,7 +106,7 @@ with st.sidebar:
         st.session_state.clear()
         st.rerun()
 
-# --- 主功能区 ---
+# --- 主功能 Tab ---
 tab1, tab2 = st.tabs(["✨ 智能加工录入", "📂 结构化全景看板"])
 
 with tab1:
@@ -102,15 +114,19 @@ with tab1:
     with l_col:
         with st.container(border=True):
             m_title = st.text_input("1. 素材标题")
-            m_raw = st.text_area("2. 素材原文", height=200)
-            m_books = st.multiselect("3. 关联教材 (支持联动)", options=book_options)
+            m_raw = st.text_area("2. 素材原文内容", height=200)
+            m_books = st.multiselect("3. 关联教材 (支持跨册联动)", options=book_options)
             
             if st.button("🧠 开启多维深度高亮分析", use_container_width=True):
                 if m_title and m_books and m_raw:
                     client = OpenAI(api_key=st.session_state['api_key'], base_url="https://api.deepseek.com")
-                    with st.spinner("联动教研分析中..."):
-                        prompt = f"你是思政名师。针对《{m_title}》结合教材 {m_books} 分析。输出分册解析、联动分析、教学设问。严禁加粗。核心词用<mark>，结论用<span class='important-red'>。原文：{m_raw}"
+                    with st.spinner("跨册联动解析并涂抹重点中..."):
+                        prompt = f"""你是一位高中政治名师。请针对素材《{m_title}》在以下教材中进行教研分析：{', '.join(m_books)}。
+                        请按：1.分册解析 2.跨教材联动 3.教学设问 三段式输出。
+                        要求：严禁加粗。核心词包裹在 <mark> </mark> 中；关键结论用 <span class='important-red'> </span>。素材：{m_raw}"""
+                        
                         resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}])
+                        # 自动修正：AI生成的**加粗**强转为荧光笔高亮
                         st.session_state['ai_output'] = re.sub(r'\*\*(.*?)\*\*', r'<mark>\1</mark>', resp.choices[0].message.content)
                 else:
                     st.warning("请补全标题、内容和教材")
@@ -118,46 +134,57 @@ with tab1:
     with r_col:
         if 'ai_output' in st.session_state:
             st.markdown("✍️ **预览与精修**")
-            final_text = st.text_area("解析结果", value=st.session_state['ai_output'], height=450)
+            final_text = st.text_area("解析结果 (可编辑)", value=st.session_state['ai_output'], height=450)
             if st.button("💾 确认归档入库", use_container_width=True):
-                new_data = {"日期": datetime.now().strftime("%Y-%m-%d"), "标题": m_title, "涉及教材": " | ".join(m_books), "考点设问": final_text, "素材原文": m_raw}
-                updated_df = pd.concat([df_cloud, pd.DataFrame([new_data])], ignore_index=True)
+                # 构建新行
+                new_row = {"日期": datetime.now().strftime("%Y-%m-%d"), "标题": m_title, "涉及教材": " | ".join(m_books), "考点设问": final_text, "素材原文": m_raw}
+                # 内存即时预更新 (确保刷新后看板立刻有数据)
+                updated_df = pd.concat([df_cloud, pd.DataFrame([new_row])], ignore_index=True)
                 
+                # 云端推送
                 repo = get_github_repo()
                 csv_str = updated_df.to_csv(index=False, encoding='utf-8-sig')
+                
+                # 重新抓取最新 SHA 防止保存冲突
                 _, latest_sha = load_from_cloud(uid)
                 if latest_sha:
-                    repo.update_file(db_filename, "Save", csv_str, latest_sha)
+                    repo.update_file(db_filename, "Save Record", csv_str, latest_sha)
                 else:
-                    repo.create_file(db_filename, "Init", csv_str)
+                    repo.create_file(db_filename, "Init Library", csv_str)
                 
-                st.success("✅ 已同步至云端！")
-                del st.session_state['ai_output']
+                st.success("✅ 已同步至云端看板！")
+                if 'ai_output' in st.session_state:
+                    del st.session_state['ai_output']
                 st.rerun()
 
 with tab2:
     if not df_cloud.empty:
-        st.subheader("📊 快速索引")
+        st.subheader("📊 快速索引清单")
         st.dataframe(df_cloud[["日期", "标题", "涉及教材"]], use_container_width=True, hide_index=True)
         st.divider()
+        
         search = st.text_input("🔍 搜索库内素材...")
         show_df = df_cloud[df_cloud.apply(lambda r: r.astype(str).str.contains(search).any(), axis=1)] if search else df_cloud
         
+        st.subheader("📖 结构化看板详情")
         for i, row in show_df.iloc[::-1].iterrows():
             with st.expander(f"📌 {row['标题']} | {row['涉及教材']}"):
+                # 1:2.5 高感知分栏
                 c1, c2 = st.columns([1, 2.5])
                 with c1:
                     st.markdown("**📚 涉及教材**")
                     for b in str(row['涉及教材']).split(" | "):
                         st.markdown(f"<span class='book-tag'>{b}</span>", unsafe_allow_html=True)
                 with c2:
-                    st.markdown("**💡 联动教研解析**")
+                    st.markdown("**💡 深度联动解析**")
                     st.markdown(row['考点设问'], unsafe_allow_html=True)
+                
                 st.divider()
                 st.caption(f"素材原文：{row['素材原文']}")
-                if st.button(f"🗑️ 删除此记录", key=f"del_{i}"):
+                if st.button(f"🗑️ 删除记录", key=f"del_{i}"):
                     new_df = df_cloud.drop(i)
-                    get_github_repo().update_file(db_filename, "Delete", new_df.to_csv(index=False, encoding='utf-8-sig'), current_sha)
+                    get_github_repo().update_file(db_filename, "Delete Record", new_df.to_csv(index=False, encoding='utf-8-sig'), current_sha)
                     st.rerun()
     else:
-        st.info("库内尚无素材。")
+        st.info("库内尚无素材，请在加工页进行录入。")
+
