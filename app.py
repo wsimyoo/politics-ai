@@ -1,5 +1,5 @@
 import streamlit as st
-import pd as pd
+import pandas as pd  # 修正：确保库名正确
 from github import Github
 from openai import OpenAI
 import hashlib
@@ -13,13 +13,9 @@ st.set_page_config(page_title="思政名师智能素材库", layout="wide", page
 st.markdown("""
     <style>
     .stApp { background-color: #f8fafc; }
-    /* 荧光笔高亮：黄色背景 */
     mark { background-color: #ffff00 !important; color: #000 !important; padding: 0 3px; border-radius: 3px; font-weight: bold; }
-    /* 重点红字样式 */
     .important-red { color: #e11d48 !important; font-weight: bold; }
-    /* 卡片美化 */
     .stExpander { border: 1px solid #e2e8f0 !important; border-radius: 12px !important; background: white !important; margin-bottom: 10px !important; }
-    /* 教材色块标签 */
     .book-tag { 
         background: #fee2e2; color: #b91c1c; padding: 2px 8px; border-radius: 4px; 
         font-size: 12px; font-weight: bold; display: block; margin-bottom: 5px; 
@@ -33,7 +29,6 @@ def get_github_repo():
     return Github(st.secrets["GH_TOKEN"]).get_repo(st.secrets["GH_REPO"])
 
 def get_available_books():
-    """实时扫描 GitHub data/ 目录获取 PDF 教材列表"""
     try:
         repo = get_github_repo()
         files = repo.get_contents("data")
@@ -43,25 +38,21 @@ def get_available_books():
         return ["必修1", "必修2", "必修3", "必修4"]
 
 def load_from_cloud(uid):
-    """【防丢失关键】实时同步云端数据与最新 SHA 校验码"""
     file_path = f"material_lib_{uid}.csv"
     standard_cols = ["日期", "标题", "涉及教材", "考点设问", "素材原文"]
     try:
         repo = get_github_repo()
         content = repo.get_contents(file_path)
-        import pandas as pd # 确保 pandas 可用
         df = pd.read_csv(content.download_url)
-        # 兼容性：自动对齐历史版本的各种列名
         rename_map = {'素材标题': '标题', '精修解析': '考点设问', '核心解析': '考点设问', '涉及教材': '涉及教材', '分类': '涉及教材'}
         df.rename(columns=rename_map, inplace=True)
         for col in standard_cols:
             if col not in df.columns: df[col] = "未记录"
         return df[standard_cols], content.sha
     except:
-        import pandas as pd
         return pd.DataFrame(columns=standard_cols), None
 
-# --- 3. 登录权限拦截 (彻底修复 KeyError) ---
+# --- 3. 登录权限拦截 ---
 if 'uid' not in st.session_state:
     st.session_state['uid'] = None
 
@@ -78,21 +69,17 @@ if not st.session_state['uid']:
                 st.rerun()
             else:
                 st.error("请输入有效的 API Key")
-    # 强制停止：未登录状态下不运行后续业务逻辑
     st.stop()
 
-# --- 4. 业务逻辑区 (只有登录后才可见) ---
+# --- 4. 业务逻辑区 ---
 uid = st.session_state['uid']
 db_filename = f"material_lib_{uid}.csv"
 book_options = get_available_books()
-# 每次页面加载均优先拉取云端数据
-import pandas as pd
 df_cloud, current_sha = load_from_cloud(uid)
 
 # --- 侧边栏 ---
 with st.sidebar:
     st.header(f"👤 老师 ID: {uid}")
-    st.caption(f"📂 存档文件: {db_filename}")
     if st.button("🔄 强制同步云端数据", use_container_width=True):
         st.rerun()
     st.divider()
@@ -126,7 +113,6 @@ with tab1:
                         要求：严禁加粗。核心词包裹在 <mark> </mark> 中；关键结论用 <span class='important-red'> </span>。素材：{m_raw}"""
                         
                         resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}])
-                        # 自动修正：AI生成的**加粗**强转为荧光笔高亮
                         st.session_state['ai_output'] = re.sub(r'\*\*(.*?)\*\*', r'<mark>\1</mark>', resp.choices[0].message.content)
                 else:
                     st.warning("请补全标题、内容和教材")
@@ -134,23 +120,20 @@ with tab1:
     with r_col:
         if 'ai_output' in st.session_state:
             st.markdown("✍️ **预览与精修**")
-            final_text = st.text_area("解析结果 (可编辑)", value=st.session_state['ai_output'], height=450)
+            final_text = st.text_area("解析结果", value=st.session_state['ai_output'], height=450)
             if st.button("💾 确认归档入库", use_container_width=True):
-                # 构建新行
                 new_row = {"日期": datetime.now().strftime("%Y-%m-%d"), "标题": m_title, "涉及教材": " | ".join(m_books), "考点设问": final_text, "素材原文": m_raw}
-                # 内存即时预更新 (确保刷新后看板立刻有数据)
+                # 内存即时预更新
                 updated_df = pd.concat([df_cloud, pd.DataFrame([new_row])], ignore_index=True)
                 
-                # 云端推送
                 repo = get_github_repo()
                 csv_str = updated_df.to_csv(index=False, encoding='utf-8-sig')
                 
-                # 重新抓取最新 SHA 防止保存冲突
                 _, latest_sha = load_from_cloud(uid)
                 if latest_sha:
-                    repo.update_file(db_filename, "Save Record", csv_str, latest_sha)
+                    repo.update_file(db_filename, "Save", csv_str, latest_sha)
                 else:
-                    repo.create_file(db_filename, "Init Library", csv_str)
+                    repo.create_file(db_filename, "Init", csv_str)
                 
                 st.success("✅ 已同步至云端看板！")
                 if 'ai_output' in st.session_state:
@@ -166,10 +149,8 @@ with tab2:
         search = st.text_input("🔍 搜索库内素材...")
         show_df = df_cloud[df_cloud.apply(lambda r: r.astype(str).str.contains(search).any(), axis=1)] if search else df_cloud
         
-        st.subheader("📖 结构化看板详情")
         for i, row in show_df.iloc[::-1].iterrows():
             with st.expander(f"📌 {row['标题']} | {row['涉及教材']}"):
-                # 1:2.5 高感知分栏
                 c1, c2 = st.columns([1, 2.5])
                 with c1:
                     st.markdown("**📚 涉及教材**")
@@ -178,12 +159,11 @@ with tab2:
                 with c2:
                     st.markdown("**💡 深度联动解析**")
                     st.markdown(row['考点设问'], unsafe_allow_html=True)
-                
                 st.divider()
                 st.caption(f"素材原文：{row['素材原文']}")
                 if st.button(f"🗑️ 删除记录", key=f"del_{i}"):
                     new_df = df_cloud.drop(i)
-                    get_github_repo().update_file(db_filename, "Delete Record", new_df.to_csv(index=False, encoding='utf-8-sig'), current_sha)
+                    get_github_repo().update_file(db_filename, "Delete", new_df.to_csv(index=False, encoding='utf-8-sig'), current_sha)
                     st.rerun()
     else:
         st.info("库内尚无素材，请在加工页进行录入。")
