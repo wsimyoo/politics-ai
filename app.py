@@ -9,25 +9,11 @@ import time
 import uuid
 from datetime import datetime
 
-# --- 1. 样式与配置 (包含深度视觉净化，隐藏管理按钮) ---
+# --- 1. 样式与配置 ---
 st.set_page_config(page_title="思政名师智能素材库", layout="wide", page_icon="🏛️")
 
 st.markdown("""
     <style>
-    /* 彻底切断官方顶栏和按钮的显示，方便分享给别人用 */
-    header {visibility: hidden !important;}
-    .stDeployButton {display:none !important;}
-    footer {visibility: hidden !important;}
-    #manage-app-button {display: none !important;}
-    #MainMenu {visibility: hidden;}
-    
-    /* 强制调整页面顶部间距 */
-    .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 0rem !important;
-    }
-
-    /* 原有美化样式 */
     .stApp { background-color: #f8fafc; }
     mark { background-color: #ffff00 !important; color: #000 !important; padding: 0 3px; border-radius: 3px; font-weight: bold; }
     .important-red { color: #e11d48 !important; font-weight: bold; }
@@ -126,11 +112,28 @@ with tab1:
         with st.container(border=True):
             m_title = st.text_input("1. 素材标题")
             m_raw = st.text_area("2. 素材原文内容", height=200)
+            
+            # --- 教材选择逻辑（终极硬核版，读取不到就用备用真实书单） ---
+            fallback_books = [
+                "必修1 中特",
+                "必修2 经济与社会",
+                "必修3 政治与法治",
+                "必修4 哲学与文化 1-70",
+                "必修4 哲学与文化71-134",
+                "选择性必修1 当代国际政治与经济",
+                "选择性必修2 法律与生活",
+                "选择性必修3 逻辑与思维"
+            ]
+            
             try:
                 repo_obj = get_github_repo()
                 pdf_list = sorted([f.name.replace('.pdf', '').replace('.PDF', '') for f in repo_obj.get_contents("data") if f.name.lower().endswith('.pdf')])
             except:
-                pdf_list = ["必修1", "必修2", "必修3", "必修4"]
+                pdf_list = fallback_books
+                
+            if not pdf_list:
+                pdf_list = fallback_books
+                
             m_books = st.multiselect("3. 关联教材", options=pdf_list)
             
             if st.button("🧠 开启名师教研分析", use_container_width=True):
@@ -138,9 +141,13 @@ with tab1:
                     client = OpenAI(api_key=st.session_state['api_key'], base_url="https://api.deepseek.com")
                     with st.spinner("AI正在进行多维联动解析..."):
                         prompt = f"针对《{m_title}》结合教材 {m_books} 分析。严禁加粗。核心词用<mark>，结论用<span class='important-red'>。原文：{m_raw}"
-                        resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}])
-                        st.session_state['ai_output'] = re.sub(r'\*\*(.*?)\*\*', r'<mark>\1</mark>', resp.choices[0].message.content)
-                else: st.warning("请完整填写素材内容")
+                        try:
+                            resp = client.chat.completions.create(model="deepseek-chat", messages=[{"role":"user","content":prompt}])
+                            st.session_state['ai_output'] = re.sub(r'\*\*(.*?)\*\*', r'<mark>\1</mark>', resp.choices[0].message.content)
+                        except Exception as e:
+                            st.error(f"调用 AI 接口失败，请检查 API Key 余额或网络连接。错误：{e}")
+                else: 
+                    st.warning("请完整填写素材标题、原文并勾选关联教材")
 
     with r_col:
         if 'ai_output' in st.session_state:
