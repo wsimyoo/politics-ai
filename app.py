@@ -28,6 +28,7 @@ st.markdown("""
 
 # --- 2. 核心后端函数 ---
 def get_github_repo():
+    # 依然使用安全调用，防止密码泄露被系统秒封
     return Github(st.secrets["GH_TOKEN"]).get_repo(st.secrets["GH_REPO"])
 
 def load_from_cloud(uid):
@@ -113,7 +114,7 @@ with tab1:
             m_title = st.text_input("1. 素材标题")
             m_raw = st.text_area("2. 素材原文内容", height=200)
             
-            # --- 教材选择逻辑（终极硬核版，读取不到就用备用真实书单） ---
+            # --- 教材选择逻辑（主包真实书单，彻底解决显示不全问题） ---
             fallback_books = [
                 "必修1 中特",
                 "必修2 经济与社会",
