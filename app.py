@@ -9,11 +9,25 @@ import time
 import uuid
 from datetime import datetime
 
-# --- 1. 样式与配置 ---
+# --- 1. 样式与配置 (包含深度视觉净化，隐藏管理按钮) ---
 st.set_page_config(page_title="思政名师智能素材库", layout="wide", page_icon="🏛️")
 
 st.markdown("""
     <style>
+    /* 彻底切断官方顶栏和按钮的显示，方便分享给别人用 */
+    header {visibility: hidden !important;}
+    .stDeployButton {display:none !important;}
+    footer {visibility: hidden !important;}
+    #manage-app-button {display: none !important;}
+    #MainMenu {visibility: hidden;}
+    
+    /* 强制调整页面顶部间距 */
+    .block-container {
+        padding-top: 1rem !important;
+        padding-bottom: 0rem !important;
+    }
+
+    /* 原有美化样式 */
     .stApp { background-color: #f8fafc; }
     mark { background-color: #ffff00 !important; color: #000 !important; padding: 0 3px; border-radius: 3px; font-weight: bold; }
     .important-red { color: #e11d48 !important; font-weight: bold; }
@@ -46,8 +60,13 @@ def load_from_cloud(uid):
         for col in standard_cols:
             if col not in df.columns: df[col] = "未记录"
         return df[standard_cols], content.sha
-    except Exception:
-        return pd.DataFrame(columns=standard_cols), None
+    except Exception as e:
+        # 【网络防空补丁】如果是真没找到文件(新用户404)，返回空表；如果是网络卡了，给警报！
+        if "404" in str(e):
+            return pd.DataFrame(columns=standard_cols), None
+        else:
+            st.error("⚠️ 连线云端服务器超时，请点击侧边栏【强制同步】重试！")
+            return pd.DataFrame(columns=standard_cols), None
 
 # --- 3. 初始化与登录拦截 ---
 if 'uid' not in st.session_state: st.session_state['uid'] = None
@@ -58,12 +77,17 @@ if not st.session_state['uid']:
     col_l, col_m, col_r = st.columns([1, 2, 1])
     with col_m:
         st.title("🏛️ 思政名师工作室")
+        st.info("💡 提示：请输入您的 DeepSeek API Key 登录专属云端库。")
         input_key = st.text_input("请输入 API Key 登录", type="password")
         if st.button("🚀 开启工作室", use_container_width=True):
-            if len(input_key) > 10:
-                st.session_state['api_key'] = input_key
-                st.session_state['uid'] = hashlib.md5(input_key.encode()).hexdigest()[:8]
+            # 【防呆补丁】自动清除复制粘贴带来的首尾空格和换行符！
+            clean_key = input_key.strip()
+            if len(clean_key) > 10:
+                st.session_state['api_key'] = clean_key
+                st.session_state['uid'] = hashlib.md5(clean_key.encode()).hexdigest()[:8]
                 st.rerun()
+            else:
+                st.warning("请输入有效的 API Key")
     st.stop()
 
 uid = st.session_state['uid']
@@ -78,7 +102,6 @@ if st.session_state['display_df'] is None:
 with st.sidebar:
     st.header(f"👤 老师 ID: {uid}")
     if st.button("🔄 强制同步云端数据", use_container_width=True):
-        # 增加一个小延迟，等待 GitHub 索引完成
         with st.spinner("正在穿透云端缓存..."):
             time.sleep(1.5)
             df_fresh, _ = load_from_cloud(uid)
